@@ -2,8 +2,8 @@ from tkinter import *
 from twisted.internet import tksupport
 from twisted.internet import reactor
 
-from src.robot import Robot
-from src.action import Action
+from robot import Robot
+from action import Action
 
 
 class Gui:
@@ -25,7 +25,7 @@ class Gui:
         root.configure(background="white")
 
         # set window size
-        root.geometry("700x160")
+        root.geometry("900x160")
 
         button_frame = Frame(root, bg="white")
         button_frame.pack(pady=20)

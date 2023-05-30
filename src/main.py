@@ -1,4 +1,4 @@
-from src.robot import RobotController
+from robotcontroller import RobotController
 
 from dotenv import load_dotenv
 

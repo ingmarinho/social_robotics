@@ -6,19 +6,9 @@ from autobahn.twisted.component import Component, run as run_component
 import time
 import os
 
-from src.action import Action
-from src.ai import Ai, AiResponse
-from src.gui import Gui
+from action import Action
+from ai import Ai, AiResponse
 
-
-class RobotController:
-    def __init__(self, stt_certainty_threshold: float, max_wamp_retries: int = 0):
-        self.robot = Robot(stt_certainty_threshold, max_wamp_retries)
-        self.gui = Gui(self.robot)
-
-    def start(self):
-        self.robot.start()
-        self.gui.start()
 
 class Robot:
     def __init__(self, stt_certainty_threshold: float, max_wamp_retries: int = 0) -> None:
@@ -30,6 +20,8 @@ class Robot:
         self.stt_certainty_threshold = stt_certainty_threshold
         
         self.in_conversation = False
+        self.is_robot_speaking = False
+        self.is_listening = False
         self.unclear_user_input = False
 
         self.wamp = Component(
@@ -49,8 +41,31 @@ class Robot:
 
     def set_action(self, action: Action) -> None:
         self.current_action = action
+    
+    @inlineCallbacks
+    def _speak(self, session: Session, text: str, delay_per_word_sec: float = 0.3) -> None:
+        # set is_robot_speaking flag to True
+        self.is_robot_speaking = True
+        
+        # set is_listening flag to False
+        self.is_listening = False
+        
+        # robot speaks
+        yield session.call("rie.dialogue.say", text=text)
+        
+        # wait for robot to finish speaking
+        yield sleep(delay_per_word_sec * len(text.split(" ")))
+        
+        # set is_listening flag to True
+        self.is_listening = True
+        
+        # set is_robot_speaking flag to False
+        self.is_robot_speaking = False
+
 
     def _on_stt_result(self, frame: dict):
+        if self.is_robot_speaking or not self.is_listening: return
+        
         user_input: str = frame["data"]["body"]["text"]
         is_final: bool = frame["data"]["body"]["final"]
         stt_certainty: float = frame["data"]["body"]["certainty"]
@@ -67,6 +82,7 @@ class Robot:
             self.ai_response.failed = True
             return
         
+        self.in_conversation = True
         self.ai_response.text = response
         self.ai_response.responded = True
 
@@ -78,9 +94,7 @@ class Robot:
     def _wait_for_user_input_timeout(
         self, session: Session, max_wait_time_sec: float = 30.0
     ) -> bool:
-        # subscribe to and call stt stream
-        yield session.subscribe(self._on_stt_result, "rie.dialogue.stt.stream")
-        yield session.call("rie.dialogue.stt.stream")
+        self.is_listening = True
 
         max_end_time_sec = time.time() + max_wait_time_sec
 
@@ -90,59 +104,60 @@ class Robot:
                 return True
             
             yield sleep(.5)
-
-        # close stt stream
-        yield session.call("rie.dialogue.stt.close")
+        
+        self.is_listening = False
         
         return False
     
     @inlineCallbacks
-    def _conversate(self, session: Session, max_wait_time_sec: float = 30) -> None:
+    def _conversate(self, session: Session, max_wait_time_sec: float = 30) -> None:        
         max_end_time_sec = time.time() + max_wait_time_sec
+        
+        # set flag to True
+        self.is_listening = True
         
         while self.in_conversation and max_end_time_sec >= time.time():
             # ask user to repeat if input was unclear
             if self.unclear_user_input:
+                # reset max_end_time_sec
+                max_end_time_sec = time.time() + max_wait_time_sec
+                
                 # reset unclear_user_input flag
                 self.unclear_user_input = False 
                 
-                yield session.call(
-                    "rie.dialogue.say", text="Kun je dat herhalen?"
-                )
+                # reset ai response
+                self.ai_response.reset()
+                
+                yield self._speak(session, "Kun je dat herhalen?")
+                
                 continue
             
             # stop if ai failed
             if self.ai_response.failed:
-                yield session.call(
-                    "rie.dialogue.say", text="Er is iets misgegaan, sorry!"
-                )
+                # reset max_end_time_sec
+                max_end_time_sec = time.time() + max_wait_time_sec
+                
+                yield self._speak(session, "Er is iets misgegaan, sorry!")
                 break
             
             # still waiting for reply from ai
             if not self.ai_response.responded:
-                yield sleep(.1)
+                yield sleep(.5)
                 continue
             
-            # make sure stt stream is closed before robot speaks
-            yield session.call("rie.dialogue.stt.close")
-            
             # robot speaks
-            yield session.call("rie.dialogue.say", text=self.ai_response.text)
+            yield self._speak(session, self.ai_response.text)
             
             # reset ai response before opening stt stream again
             self.ai_response.reset()
             
-            # subscribe to and call stt stream again
-            yield session.subscribe(self._on_stt_result, "rie.dialogue.stt.stream")
-            yield session.call("rie.dialogue.stt.stream")
-
-        
-        # make sure stt stream is closed
-        yield session.call("rie.dialogue.stt.close")
+            # reset max_end_time_sec
+            max_end_time_sec = time.time() + max_wait_time_sec
         
         # reset flags
         self.in_conversation = False
         self.unclear_user_input = False
+        self.is_listening = False
         
         # reset ai response
         self.ai_response.reset()
@@ -188,18 +203,16 @@ class Robot:
                         mode="linear",
                         frames=[{"time": 1, "data": {"body.head.eyes": [173, 216, 230]}}],
                     )
-                        # Enter default text
-                    yield session.call(
-                        "rie.dialogue.say", text="Hallo, wat heb jij een mooie uitstraling!"
-                    )
-
+                    
+                    # Enter default text
+                    yield self._speak(session, "Hallo, wat heb jij een mooie uitstraling!")
+                    
                     # ask user to ask a question
-                    yield session.call(
-                        "rie.dialogue.say", text="Stel mij een vraag!"
-                    )
+                    yield self._speak(session, "Stel mij een vraag!")
 
                     # wait for user to ask a question
-                    if not self._wait_for_initial_user_input(): return
+                    has_input = yield self._wait_for_user_input_timeout(session)
+                    if not has_input: return
                     
                     # start conversation with user
                     yield self._conversate(session)
@@ -222,20 +235,21 @@ class Robot:
                     yield session.call("rie.vision.face.find")
 
                     # change eye colour after face found
-                    yield session.call(
+                    session.call(
                         "rom.actuator.light.write",
                         mode="linear",
                         frames=[{"time": 1, "data": {"body.head.eyes": [255, 105, 180]}}],
                     )
 
                     # make robot look up
-                    yield session.call(
-                        "rom.actuator.motor.write",
-                        frames=[
-                            {"time": 400, "data": {"body.head.pitch": 0.1}},
-                        ],
-                        force=True,
-                    )
+                    # session.call(
+                    #     "rom.actuator.motor.write",
+                    #     frames=[
+                    #         {"time": 400, "data": {"body.head.pitch": 0.1}},
+                    #     ],
+                    #     force=True,
+                    # )
+                    
 
                     # wave to user
                     yield session.call(
@@ -243,35 +257,34 @@ class Robot:
                     )
 
                     # ask user to ask a question
-                    yield session.call("rie.dialogue.say", text="Stel mij een vraag!")
+                    yield self._speak(session, "Stel mij een vraag!")
 
                     # wait for user to ask a question
-                    if not self._wait_for_initial_user_input(): return
+                    has_input = yield self._wait_for_user_input_timeout(session)
+                    if not has_input: return
                     
                     # start conversation with user
                     yield self._conversate(session)
 
                     # say goodbye to user
-                    yield session.call("rie.dialogue.say", text="Tot ziens!")
+                    yield self._speak(session, "Tot ziens!")
+                    
 
-                    # # track face while in vision
-                    # yield session.call("rie.vision.face.track")
-
-                    # # listen to face stream
-                    # yield session.subscribe(self.__on_face, "rie.vision.face.stream")
-                    # yield session.call("rie.vision.face.stream")
 
     @inlineCallbacks
-    @staticmethod
-    def _setup(session: Session) -> None:
+    def _setup(self, session: Session) -> None:
         # change language to nl
         yield session.call("rie.dialogue.config.language", lang="nl")
         # change talking speed
         yield session.call("rie.dialogue.config.speed", speed="100")
+        
+        # subscribe to and call stt stream
+        yield session.subscribe(self._on_stt_result, "rie.dialogue.stt.stream")
+        yield session.call("rie.dialogue.stt.stream")
     
     @inlineCallbacks
     def _loop(self, session: Session, details: SessionDetails) -> None:
-        self._setup(session)
+        yield self._setup(session)
 
         while self.current_action != Action.Quit:
             # make robot stand by default
