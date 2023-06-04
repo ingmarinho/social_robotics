@@ -1,10 +1,15 @@
 from robotcontroller import RobotController
+import config
+from pathlib import Path
 
 from dotenv import load_dotenv
 
-load_dotenv()
+load_dotenv(".env.keys")
+
 
 if __name__ == "__main__":
-    robot_controller = RobotController(stt_certainty_threshold=0.7)
+    cfg = config.load(Path("config.yml"))
+
+    robot_controller = RobotController(cfg, stt_certainty_threshold=0.7)
 
     robot_controller.start()

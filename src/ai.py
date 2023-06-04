@@ -2,21 +2,24 @@ import openai
 import os
 from dataclasses import dataclass
 
+from config import Config
+
 
 class Ai:
-    def __init__(self):
-        openai.api_key = os.environ["OPENAI_API_KEY"]
+    def __init__(self, config: Config) -> None:
+        self.config = config
 
-        self.SYSTEM_MESSAGE = "Je bent een Sociale Robot genaamd Pepper. Je maakt conversatie met mensen. Hou je antwoorden kort. Gedraag je als een mens. Je bevindt je op de Hogeschool Utrecht, het is 2023. Je hebt een fysiek lichaam maar je kan deze niet gebruiken omdat deze te fragiel is. Reageer alleen met zinnen en woorden, geen emotes"
+        openai.api_key = os.environ["OPENAI_API_KEY"]
 
         self.reset_conversation()
 
     def reset_conversation(self) -> None:
-        self.messages = [{"role": "system", "content": self.SYSTEM_MESSAGE}]
+        self.messages = [
+            {"role": "system", "content": self.config.SystemMessage}]
 
     def conversate(self, text: str) -> None | str:
         self.messages.append(
-            {"role": "user", "content": text + " | Hou je antwoord kort."}
+            {"role": "user", "content": text}
         )
 
         try:
