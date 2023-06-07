@@ -272,7 +272,7 @@ class Robot:
                 )
 
                 # ask user to ask a question
-                yield self._speak(session, "Stel mij een vraag!")
+                yield self._speak(session, "Hallo, kan ik je ergens mee helpen?")
 
                 # wait for user to ask a question
                 has_input = yield self._wait_for_user_input_timeout(session)
