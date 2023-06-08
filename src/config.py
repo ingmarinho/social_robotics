@@ -15,9 +15,10 @@ def _snake_to_pascal(s: str) -> str:
 
 
 def load(path: Path) -> Config:
-    yaml_dict_converted = dict()
+    yaml_dict_converted = {}
+    
     with open(path, "r") as f:
-        yaml_dict = yaml.safe_load(f)
+        yaml_dict: dict = yaml.safe_load(f)
 
         for k in yaml_dict.keys():
             yaml_dict_converted[_snake_to_pascal(k)] = yaml_dict[k]
